@@ -14,6 +14,24 @@ export {
 } from './web-search.js';
 export type { WebSearchResult, WebSearchSource } from './web-search.js';
 
+/**
+ * 打印本次调用的 token 用量，用于观察隐式缓存/联网是否生效。
+ * 不同厂商字段名不一致，这里把常见的几种都试一遍。
+ */
+function logUsage(tag: string, usage: any) {
+  if (!usage) return;
+  const input = usage.input_tokens ?? usage.prompt_tokens;
+  const output = usage.output_tokens ?? usage.completion_tokens;
+  const cached =
+    usage.input_tokens_details?.cached_tokens ??
+    usage.prompt_tokens_details?.cached_tokens ??
+    usage.cached_tokens ??
+    usage.prompt_cache_hit_tokens;
+  const parts = [`输入${input ?? '?'}`, `输出${output ?? '?'}`];
+  parts.push(cached === undefined ? '缓存字段缺失' : `缓存命中${cached}`);
+  console.log(`📊 ${tag} ${parts.join(' ')}`);
+}
+
 class _OpenAI {
   private _client?: OpenAIClient;
   private _abortCallbacks: Record<string, VoidFunction> = {};
@@ -74,22 +92,43 @@ class _OpenAI {
     );
 
     let fallbackNotice = '';
+    const webSearch = this.config.webSearch;
     const webSearchEnabled =
       !params.stream &&
-      this.config.webSearch?.enabled &&
-      (this.config.webSearch.strategy === 'auto' ||
-        shouldUseWebSearch(params.messages as any[]));
+      webSearch?.enabled &&
+      (webSearch.strategy === 'auto' ||
+        shouldUseWebSearch(params.messages as any[], {
+          ageBand: webSearch.ageBand,
+          patterns: webSearch.patterns,
+        }));
     if (webSearchEnabled) {
       try {
+        // 火山方舟联网内容插件只支持 Responses API；不传 sources 时默认走全网搜索，
+        // 从而避开 douyin / moji / toutiao 这三个额外付费源。
+        const searchTool: Record<string, any> = { type: 'web_search' };
+        if (webSearch?.maxKeyword) searchTool.max_keyword = webSearch.maxKeyword;
+        if (webSearch?.limit) searchTool.limit = webSearch.limit;
+        if (webSearch?.userLocation?.region || webSearch?.userLocation?.city) {
+          searchTool.user_location = webSearch.userLocation;
+        }
+        const responsesParams: Record<string, any> = {
+          model: params.model!,
+          input: params.messages as any,
+          tools: [searchTool],
+          tool_choice: 'auto',
+          // 火山方舟：Responses API 用 reasoning.effort 控制深度思考，
+          // minimal 即关闭思考直接回答，避免语音场景等待过长。
+          reasoning: { effort: 'minimal' },
+        };
+        if (webSearch?.maxToolCalls) {
+          responsesParams.max_tool_calls = webSearch.maxToolCalls;
+        }
+
         const response = await this._client!.responses.create(
-          {
-            model: params.model!,
-            input: params.messages as any,
-            tools: [{ type: 'web_search' }],
-            tool_choice: 'auto',
-          } as any,
+          responsesParams as any,
           mergedRequestOptions,
         );
+        logUsage('Responses', (response as any)?.usage);
         const result = parseWebSearchResponse(response);
         if (!result.text) {
           throw new Error('Responses API 未返回可播放的文字');
@@ -121,15 +160,14 @@ class _OpenAI {
       }
     }
 
-    const res = await this._client!.chat.completions.create(
-      params,
-      mergedRequestOptions,
-    ).catch(async (e) => {
-      const message = e instanceof Error ? e.message : String(e);
-      console.error(`❌ LLM 响应异常：${message}`);
-      await onError?.(e);
-      return null;
-    });
+    const res = await this._client!.chat.completions.create(params, mergedRequestOptions).catch(
+      async (e) => {
+        const message = e instanceof Error ? e.message : String(e);
+        console.error(`❌ LLM 响应异常：${message}`);
+        await onError?.(e);
+        return null;
+      },
+    );
 
     let result = '';
 
@@ -148,6 +186,7 @@ class _OpenAI {
       }
     } else {
       result = res?.choices?.[0]?.message?.content ?? '';
+      logUsage('Chat', (res as any)?.usage);
       if (fallbackNotice && result) {
         result = `${fallbackNotice}${result}`;
       }

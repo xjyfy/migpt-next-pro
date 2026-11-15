@@ -15,7 +15,7 @@ node_modules/
 
 # ============ 构建产物 ============
 dist/
-build/
+/build/
 .next/
 out/
 .turbo/
@@ -34,3 +34,18 @@ pnpm-debug.log*
 
 # ============ 部署平台 ============
 .vercel
+
+# ============ 本地真实配置 / 部署大文件 ============
+# 只忽略仓库根目录的 config.js（deploy/build 里的同名文件是编译产物，要保留）
+/config.js
+deploy/image/*.tar
+deploy/image/_layers/
+deploy/*.zip
+
+# ============ 本地运维文档（不进仓库，仓库只留 README）============
+deploy/联网搜索方案.md
+deploy/部署说明.md
+
+# ============ 例外：deploy/build 的编译产物随仓库提供 ============
+# 让使用者 clone 后无需 Node 环境即可 docker build
+!deploy/build/packages/*/dist/
