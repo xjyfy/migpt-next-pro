@@ -281,6 +281,25 @@ docker logs -f migpt-next
 | 有 `🔊` 但音箱没声音 | 该分支没 `return { handled: true }` 就会落到引擎默认分支；也检查 `ttsCommand` 是否适配你的机型 |
 | `⚠️ 联网词表正则无效，已忽略` | `webSearch.patterns` 里某个正则写错了，改回 `|` 连接的纯词串 |
 
+### 网页查看日志（可选，不需要 PHP）
+
+不想 SSH 翻文件的话，仓库里带了一个静态页面 `deploy/log-viewer/index.html`：选日期看历史日志，
+选当天每 5 秒自动刷新，还能按 🔥提问 / 🤖切大模型 / 🔊播报 分类筛选并统计条数。
+
+前提是 NAS 装了 Web Station。DSM 6.2 装好后 **80 端口就在服务 `/volume1/web`**，不需要新建虚拟主机，
+也不需要 PHP：
+
+```bash
+mkdir -p /volume1/web/logs-view
+# 把 deploy/log-viewer/index.html 传进去
+mount --bind /volume1/docker/migpt/logs /volume1/web/logs-view/logsdata
+```
+
+然后访问 `http://<NAS地址>/logs-view/`。`mount --bind` 重启失效，记得在
+「控制面板 → 任务计划 → 触发的任务 → 开机」里加一条同样的命令。
+
+完整步骤、实测踩坑记录和排查表见 [`deploy/log-viewer/log-viewer.md`](deploy/log-viewer/log-viewer.md)。
+
 ---
 
 ## 已知限制（不是配置问题）
@@ -308,6 +327,7 @@ packages/
   utils/     工具函数
 deploy/
   build/     可直接构建的镜像上下文（Dockerfile + 4 个包的编译产物）
+  log-viewer/ 网页日志查看器（单文件静态 HTML + 使用说明，可选）
 config.example.js   脱敏示例配置（复制成 config.js 再填凭证）
 Dockerfile.local    从仓库根的编译产物构建镜像
 ```

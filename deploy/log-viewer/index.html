@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>小爱音箱 · 运行日志</title>
+<style>
+  :root{
+    --bg:#12161c; --panel:#182029; --line:#243040; --text:#d7dee8; --dim:#8a97a6;
+    --ask:#f0b429; --llm:#4ea1ff; --say:#5ed99b; --native:#9aa7b6; --warn:#ff9f6b;
+    --safe:#ff7b72; --net:#7bd3ea; --usage:#b3a1ff; --err:#ff6b6b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
+  header{position:sticky;top:0;z-index:10;background:var(--panel);
+    border-bottom:1px solid var(--line);padding:12px 16px}
+  .row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+  h1{font-size:16px;margin:0 16px 0 0;font-weight:600;letter-spacing:.5px}
+  input[type=date],input[type=search]{background:#0e1319;color:var(--text);
+    border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-size:13px}
+  input[type=search]{min-width:220px}
+  button{background:#222e3b;color:var(--text);border:1px solid var(--line);
+    border-radius:6px;padding:6px 10px;font-size:13px;cursor:pointer}
+  button:hover{background:#2b3949}
+  button.on{background:#2f4a66;border-color:#3f6a94;color:#fff}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+  .chip{font-size:12px;padding:3px 9px;border-radius:999px;border:1px solid var(--line);
+    background:#141b23;color:var(--dim);cursor:pointer;user-select:none}
+  .chip.on{color:#fff}
+  .stats{display:flex;flex-wrap:wrap;gap:14px;margin-top:10px;font-size:12px;color:var(--dim)}
+  .stats b{color:var(--text);font-weight:600}
+  #hint{font-size:12px;color:var(--dim);margin-left:auto}
+  main{padding:12px 16px 60px}
+  .log{background:#0e1319;border:1px solid var(--line);border-radius:8px;
+    padding:8px 0;font-family:ui-monospace,Consolas,"Courier New",monospace;font-size:13px}
+  .ln{display:flex;gap:10px;padding:3px 14px;border-left:3px solid transparent;white-space:pre-wrap;word-break:break-word}
+  .ln:hover{background:#151d26}
+  .t{color:#65707d;flex:0 0 auto;font-size:12px;padding-top:1px}
+  .m{flex:1 1 auto;min-width:0}
+  .tag{flex:0 0 auto;font-size:12px;padding:0 6px;border-radius:4px;background:#1b242f;color:var(--dim)}
+  .empty{padding:40px;text-align:center;color:var(--dim)}
+  .ask{border-left-color:var(--ask)} .ask .m{color:#ffe6a8}
+  .llm{border-left-color:var(--llm)} .llm .m{color:#bcd8ff}
+  .say{border-left-color:var(--say)} .say .m{color:#c6f2dc}
+  .native{border-left-color:var(--native)}
+  .warn{border-left-color:var(--warn)} .warn .m{color:#ffd3ba}
+  .safe{border-left-color:var(--safe)} .safe .m{color:#ffc9c5}
+  .net{border-left-color:var(--net)} .net .m{color:#cdeff7}
+  .usage{border-left-color:var(--usage)} .usage .m{color:#e0d8ff}
+  .err{border-left-color:var(--err)} .err .m{color:#ffbcbc}
+  .sys{color:#6f7a86}
+  #jump{position:fixed;right:18px;bottom:18px;display:none}
+</style>
+</head>
+<body>
+<header>
+  <div class="row">
+    <h1>小爱音箱 · 运行日志</h1>
+    <label>日期 <input type="date" id="date"></label>
+    <input type="search" id="kw" placeholder="关键词过滤，如：联网 / 错误 / 天气">
+    <button id="refresh">刷新</button>
+    <button id="follow" class="on">跟随最新</button>
+    <span id="hint"></span>
+  </div>
+  <div class="chips" id="chips"></div>
+  <div class="stats" id="stats"></div>
+</header>
+<main><div class="log" id="log"><div class="empty">加载中…</div></div></main>
+<button id="jump">↓ 回到底部</button>
+
+<script>
+/* ============ 只有这里需要按你的环境改 ============ */
+const CONFIG = {
+  logDir: 'logsdata',        // 日志目录对外的相对路径（Web Station 里的别名/软链目录名）
+  fileName: d => `migpt-${d}.log`,  // 与你 config.js 里 FILE_LOG 的命名一致
+  refreshMs: 5000,           // 当天日志自动刷新间隔
+};
+/* ================================================= */
+
+const CAT = [
+  { key:'ask',    icon:'🔥', label:'提问',      re:/🔥/ },
+  { key:'llm',    icon:'🤖', label:'切大模型',  re:/🤖/ },
+  { key:'say',    icon:'🔊', label:'播报',      re:/🔊/ },
+  { key:'native', icon:'🔈', label:'小爱原生',  re:/🔈/ },
+  { key:'warn',   icon:'⏸', label:'放行/超时',  re:/⏸|🔎|⏱|🛑|🧪/ },
+  { key:'safe',   icon:'🛡', label:'安全分流',  re:/🛡/ },
+  { key:'net',    icon:'🌐', label:'联网',      re:/🌐/ },
+  { key:'usage',  icon:'📊', label:'用量',      re:/📊/ },
+  { key:'err',    icon:'❌', label:'错误',      re:/❌|⚠️/ },
+  { key:'sys',    icon:'🧹', label:'维护/其它',  re:/🧹|🗒|🔱/ },
+];
+
+const $ = id => document.getElementById(id);
+const pad = n => String(n).padStart(2,'0');
+const todayStr = () => { const d=new Date(); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; };
+
+const state = { date: todayStr(), cat: new Set(CAT.map(c=>c.key)), kw:'', lines:[], lastCount:0, follow:true, timer:null };
+
+// 分类标签 UI
+const chips = $('chips');
+for (const c of CAT){
+  const el = document.createElement('span');
+  el.className='chip on'; el.dataset.key=c.key; el.textContent=`${c.icon} ${c.label}`;
+  el.onclick = () => {
+    if(state.cat.has(c.key)){ state.cat.delete(c.key); el.classList.remove('on'); }
+    else { state.cat.add(c.key); el.classList.add('on'); }
+    render();
+  };
+  chips.appendChild(el);
+}
+
+$('date').value = state.date;
+$('date').onchange = e => { state.date = e.target.value || todayStr(); state.lastCount=0; load(true); schedule(); };
+$('kw').oninput = e => { state.kw = e.target.value.trim(); render(); };
+$('refresh').onclick = () => load(true);
+$('follow').onclick = e => { state.follow = !state.follow; e.target.classList.toggle('on', state.follow); if(state.follow) scrollBottom(); };
+$('jump').onclick = scrollBottom;
+window.addEventListener('scroll', () => { $('jump').style.display = (document.body.scrollHeight - scrollY - innerHeight > 200) ? 'block' : 'none'; });
+
+function scrollBottom(){ scrollTo({ top: document.body.scrollHeight, behavior:'smooth' }); }
+
+function classify(text){
+  for (const c of CAT) if (c.re.test(text)) return c;
+  return { key:'sys', label:'其它' };
+}
+
+function parse(raw){
+  return raw.split(/\r?\n/).filter(l=>l.trim()).map(line=>{
+    const m = line.match(/^\[([^\]]+)\]\s*\[([^\]]*)\]\s*(.*)$/);
+    const time = m ? m[1].slice(-8) : '';
+    const body = m ? m[3] : line;
+    return { time, body, cat: classify(body) };
+  });
+}
+
+async function fetchLog(date){
+  const name = CONFIG.fileName(date);
+  for (const suffix of ['', '.1']){           // 兼容文件名轮转
+    const url = `${CONFIG.logDir}/${name}${suffix}`;
+    const res = await fetch(url, { cache:'no-store' });
+    if (res.ok) return await res.text();
+  }
+  return null;
+}
+
+let loading = false;
+async function load(force){
+  if (loading) return;
+  loading = true;
+  try{
+    const txt = await fetchLog(state.date);
+    if (txt === null){
+      if (force || state.lines.length === 0){
+        $('log').innerHTML = '';
+        const e = document.createElement('div');
+        e.className='empty';
+        e.textContent = `${state.date} 没有日志文件（${CONFIG.fileName(state.date)}）`;
+        $('log').appendChild(e);
+      }
+      $('hint').textContent = `无该日日志`;
+      return;
+    }
+    const lines = parse(txt);
+    if (lines.length !== state.lastCount || force){
+      state.lines = lines;
+      state.lastCount = lines.length;
+      render();
+      $('hint').textContent = `${state.date} · ${lines.length} 行 · 更新于 ${new Date().toLocaleTimeString('zh-CN',{hour12:false})}`;
+      if (state.follow) scrollBottom();
+    }
+  }catch(err){
+    $('hint').textContent = `读取失败：${err.message}（检查 ${CONFIG.logDir} 路径与权限）`;
+  }finally{ loading = false; }
+}
+
+function render(){
+  const kw = state.kw.toLowerCase();
+  const shown = state.lines.filter(l =>
+    state.cat.has(l.cat.key) && (!kw || l.body.toLowerCase().includes(kw)));
+
+  // 统计
+  const cnt = {};
+  for (const l of state.lines) cnt[l.cat.key] = (cnt[l.cat.key]||0)+1;
+  $('stats').innerHTML = '';
+  for (const c of CAT){
+    const s = document.createElement('span');
+    s.textContent = `${c.icon} ${c.label} `;
+    const b = document.createElement('b');
+    b.textContent = cnt[c.key] || 0;
+    s.appendChild(b);
+    $('stats').appendChild(s);
+  }
+
+  // 正文
+  const box = $('log');
+  box.textContent = '';
+  if (!shown.length){
+    const e = document.createElement('div');
+    e.className='empty';
+    e.textContent = state.lines.length ? '当前筛选条件下没有内容' : '这一天没有日志行';
+    box.appendChild(e);
+    return;
+  }
+  for (const l of shown){
+    const d = document.createElement('div');
+    d.className = `ln ${l.cat.key}`;
+    const t = document.createElement('span'); t.className='t'; t.textContent = l.time;
+    const g = document.createElement('span'); g.className='tag'; g.textContent = l.cat.icon || '';
+    const m = document.createElement('span'); m.className='m'; m.textContent = l.body;
+    d.append(t, g, m);
+    box.appendChild(d);
+  }
+}
+
+function schedule(){
+  clearInterval(state.timer);
+  if (state.date === todayStr()) state.timer = setInterval(()=>load(false), CONFIG.refreshMs);
+}
+
+load(true); schedule();
+setInterval(()=>{ // 跨天后日期自动前进
+  if (state.date !== todayStr() && state.lastCount === 0){ state.date = todayStr(); $('date').value = state.date; load(true); schedule(); }
+}, 60000);
+</script>
+</body>
+</html>
