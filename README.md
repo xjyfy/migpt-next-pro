@@ -2,7 +2,8 @@
 
 让小爱音箱PLAY（L05B）接上大模型：**小爱答得上的自己答，答不上的交给豆包**，实时问题自动联网，危险问题强制换人答。
 
-![Uploading 屏幕截图 2026-11-16 220819.png…]()
+<img width="1730" height="1045" alt="屏幕截图 2026-11-16 220819" src="https://github.com/user-attachments/assets/6948b5df-910b-4044-b813-2c032a601a93" />
+
 
 
 ## 这个仓库从哪来
